@@ -38,6 +38,10 @@ class microsoft365(Extensions):
             "Microsoft - Get Calendar Items": self.get_calendar_items,
             "Microsoft - Add Calendar Item": self.add_calendar_item,
             "Microsoft - Remove Calendar Item": self.remove_calendar_item,
+            "Microsoft - Get Todo Tasks": self.get_todo_tasks,
+            "Microsoft - Create Todo Task": self.create_todo_task,
+            "Microsoft - Update Todo Task": self.update_todo_task,
+            "Microsoft - Delete Todo Task": self.delete_todo_task,
         }
 
     def authenticate(self):
@@ -388,3 +392,179 @@ class microsoft365(Extensions):
         except Exception as e:
             logging.info(f"Error removing calendar item: {str(e)}")
             return "Failed to remove calendar item."
+
+    async def get_todo_tasks(self, max_tasks=10):
+        """
+        Get Todo tasks from the Microsoft 365 account
+
+        Args:
+        max_tasks (int): The maximum number of tasks to retrieve
+
+        Returns:
+        list: A list of dictionaries containing task data
+        """
+        logging.info(f"Attempting to retrieve up to {max_tasks} Todo tasks")
+        try:
+            logging.debug("Authenticating with Microsoft 365")
+            account = self.authenticate()
+            logging.debug("Authentication successful")
+
+            logging.debug("Accessing Tasks API")
+            tasks = account.tasks()
+            logging.debug("Tasks API accessed successfully")
+
+            logging.debug("Getting default task list")
+            default_list = tasks.get_default_list()
+            logging.debug("Default task list retrieved")
+
+            logging.info(f"Fetching up to {max_tasks} tasks")
+            task_items = default_list.get_tasks(limit=max_tasks)
+            logging.info(f"Successfully fetched tasks")
+
+            todo_tasks = []
+            for task in task_items:
+                logging.debug(f"Processing task: {task.subject}")
+                task_data = {
+                    "id": task.task_id,
+                    "title": task.subject,
+                    "body": task.body,
+                    "due_date": task.due.date() if task.due else None,
+                    "completed": task.completed is not None,
+                }
+                todo_tasks.append(task_data)
+                logging.debug(f"Task processed: {task_data['title']}")
+
+            logging.info(f"Retrieved {len(todo_tasks)} tasks")
+            return todo_tasks
+        except Exception as e:
+            logging.error(f"Error retrieving Todo tasks: {str(e)}")
+            return []
+
+    async def create_todo_task(self, title, body, due_date):
+        """
+        Create a new Todo task in the Microsoft 365 account
+
+        Args:
+        title (str): The title of the task
+        body (str): The body of the task
+        due_date (datetime): The due date of the task
+
+        Returns:
+        str: The result of creating the task
+        """
+        logging.info(f"Attempting to create new Todo task: {title}")
+        try:
+            logging.debug("Authenticating with Microsoft 365")
+            account = self.authenticate()
+            logging.debug("Authentication successful")
+
+            logging.debug("Accessing Tasks API")
+            tasks = account.tasks()
+            logging.debug("Tasks API accessed successfully")
+
+            logging.debug("Getting default task list")
+            default_list = tasks.get_default_list()
+            logging.debug("Default task list retrieved")
+
+            logging.info("Creating new task")
+            new_task = default_list.new_task()
+            new_task.subject = title
+            new_task.body = body
+            new_task.due = due_date
+            logging.debug(f"Task details set: Title='{title}', Due={due_date}")
+
+            logging.info("Saving new task")
+            new_task.save()
+            logging.info("Task saved successfully")
+
+            return "Todo task created successfully."
+        except Exception as e:
+            logging.error(f"Error creating Todo task: {str(e)}")
+            return "Failed to create Todo task."
+
+    async def update_todo_task(self, task_id, title=None, body=None, due_date=None):
+        """
+        Update a Todo task in the Microsoft 365 account
+
+        Args:
+        task_id (str): The ID of the task to update
+        title (str): The new title of the task
+        body (str): The new body of the task
+        due_date (datetime): The new due date of the task
+
+        Returns:
+        str: The result of updating the task
+        """
+        logging.info(f"Attempting to update Todo task: {task_id}")
+        try:
+            logging.debug("Authenticating with Microsoft 365")
+            account = self.authenticate()
+            logging.debug("Authentication successful")
+
+            logging.debug("Accessing Tasks API")
+            tasks = account.tasks()
+            logging.debug("Tasks API accessed successfully")
+
+            logging.debug("Getting default task list")
+            default_list = tasks.get_default_list()
+            logging.debug("Default task list retrieved")
+
+            logging.info(f"Fetching task with ID: {task_id}")
+            task = default_list.get_task(task_id)
+            logging.info("Task fetched successfully")
+
+            if title:
+                logging.debug(f"Updating task title to: {title}")
+                task.subject = title
+            if body:
+                logging.debug("Updating task body")
+                task.body = body
+            if due_date:
+                logging.debug(f"Updating task due date to: {due_date}")
+                task.due = due_date
+
+            logging.info("Saving updated task")
+            task.save()
+            logging.info("Task updated successfully")
+
+            return "Todo task updated successfully."
+        except Exception as e:
+            logging.error(f"Error updating Todo task: {str(e)}")
+            return "Failed to update Todo task."
+
+    async def delete_todo_task(self, task_id):
+        """
+        Delete a Todo task from the Microsoft 365 account
+
+        Args:
+        task_id (str): The ID of the task to delete
+
+        Returns:
+        str: The result of deleting the task
+        """
+        logging.info(f"Attempting to delete Todo task: {task_id}")
+        try:
+            logging.debug("Authenticating with Microsoft 365")
+            account = self.authenticate()
+            logging.debug("Authentication successful")
+
+            logging.debug("Accessing Tasks API")
+            tasks = account.tasks()
+            logging.debug("Tasks API accessed successfully")
+
+            logging.debug("Getting default task list")
+            default_list = tasks.get_default_list()
+            logging.debug("Default task list retrieved")
+
+            logging.info(f"Fetching task with ID: {task_id}")
+            task = default_list.get_task(task_id)
+            logging.info("Task fetched successfully")
+
+            logging.info("Deleting task")
+            task.delete()
+            logging.info("Task deleted successfully")
+
+            return "Todo task deleted successfully."
+        except Exception as e:
+            logging.error(f"Error deleting Todo task: {str(e)}")
+            return "Failed to delete Todo task."

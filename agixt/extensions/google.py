@@ -58,6 +58,9 @@ class google(Extensions):
             "Google - Get Calendar Items": self.get_calendar_items,
             "Google - Add Calendar Item": self.add_calendar_item,
             "Google - Remove Calendar Item": self.remove_calendar_item,
+            "Google - Get Keep Notes": self.get_keep_notes,
+            "Google - Create Keep Note": self.create_keep_note,
+            "Google - Delete Keep Note": self.delete_keep_note,
         }
 
     def authenticate(self):
@@ -78,6 +81,7 @@ class google(Extensions):
                     "https://www.googleapis.com/auth/gmail.send",
                     "https://www.googleapis.com/auth/calendar",
                     "https://www.googleapis.com/auth/calendar.events",
+                    "https://www.googleapis.com/auth/keep",  # Added Keep API scope
                 ],
             )
             creds = flow.run_local_server(port=0)
@@ -491,8 +495,8 @@ class google(Extensions):
                 item_data = {
                     "id": event["id"],
                     "subject": event["summary"],
-                    "start_time": event["start"]["dateTime"],
-                    "end_time": event["end"]["dateTime"],
+                    "start_time": event["start"].get("dateTime", event["start"].get("date")),
+                    "end_time": event["end"].get("dateTime", event["end"].get("date")),
                     "location": event.get("location", ""),
                     "organizer": event["organizer"]["email"],
                 }
@@ -562,3 +566,78 @@ class google(Extensions):
         except Exception as e:
             logging.info(f"Error removing calendar item: {str(e)}")
             return "Failed to remove calendar item."
+
+    async def get_keep_notes(self, page_size=10, page_token=None, filter_str=None):
+        """
+        Lists notes from Google Keep
+
+        Args:
+        page_size (int): The maximum number of results to return (default 10)
+        page_token (str): The previous page's nextPageToken (default None)
+        filter_str (str): Filter for list results (default None)
+
+        Returns:
+        List[Dict]: A list of note data
+        """
+        try:
+            service = build("keep", "v1", credentials=self.authenticate())
+            params = {
+                "pageSize": page_size,
+                "pageToken": page_token,
+                "filter": filter_str
+            }
+            results = service.notes().list(**{k: v for k, v in params.items() if v is not None}).execute()
+            notes = results.get('notes', [])
+            return [{
+                'id': note.get('name', '').split('/')[-1],
+                'title': note.get('title', ''),
+                'content': note.get('body', {}).get('text', {}).get('text', '')
+            } for note in notes]
+        except Exception as e:
+            logging.info(f"Error retrieving notes: {str(e)}")
+            return []
+
+    async def create_keep_note(self, title, content):
+        """
+        Create a new note in Google Keep
+
+        Args:
+        title (str): The title of the note
+        content (str): The content of the note
+
+        Returns:
+        str: The result of creating the note
+        """
+        try:
+            service = build("keep", "v1", credentials=self.authenticate())
+            note = {
+                'title': title,
+                'body': {
+                    'text': {
+                        'text': content
+                    }
+                }
+            }
+            created_note = service.notes().create(body=note).execute()
+            return f"Note created successfully with ID: {created_note['name'].split('/')[-1]}"
+        except Exception as e:
+            logging.info(f"Error creating note: {str(e)}")
+            return "Failed to create note."
+
+    async def delete_keep_note(self, note_id):
+        """
+        Delete a note from Google Keep
+
+        Args:
+        note_id (str): The ID of the note to delete
+
+        Returns:
+        str: The result of deleting the note
+        """
+        try:
+            service = build("keep", "v1", credentials=self.authenticate())
+            service.notes().delete(name=f"notes/{note_id}").execute()
+            return "Note deleted successfully."
+        except Exception as e:
+            logging.info(f"Error deleting note: {str(e)}")
+            return "Failed to delete note."
