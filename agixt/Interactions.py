@@ -41,7 +41,6 @@ class Interactions:
         if agent_name != "":
             self.agent_name = agent_name
             self.agent = Agent(self.agent_name, user=user, ApiClient=self.ApiClient)
-            self.agent_commands = self.agent.get_commands_string()
             self.websearch = Websearch(
                 collection_number=collection_id,
                 agent=self.agent,
@@ -80,7 +79,6 @@ class Interactions:
         else:
             self.agent_name = ""
             self.agent = None
-            self.agent_commands = ""
             self.websearch = None
             self.agent_memory = None
             self.positive_feedback_memories = None
@@ -318,8 +316,6 @@ class Interactions:
             context = f"The user's input causes the assistant to recall these memories from activities:\n{context}\n\n**If referencing a file or image from context to the user, link to it with a url at `{conversation_outputs}the_file_name` - The URL is accessible to the user. If the file has not been referenced in context or from activities, do not attempt to link to it as it may not exist. Use exact file names and links from context only.** .\n"
         else:
             context = ""
-        if prompt_name == "Chat with Commands" and self.agent_commands == "":
-            prompt_name = "Chat"
         file_contents = ""
         if "import_files" in prompt_args:
             file_reader = FileReader(
@@ -413,13 +409,51 @@ class Interactions:
         for arg in kwargs:
             if arg in skip_args:
                 del args[arg]
+        agent_commands = ""
+        if len(command_list) > 0:
+            agent_extensions = self.agent.get_agent_extensions()
+            agent_commands = "## Available Commands\n\n**See command execution examples of commands that the assistant has access to below:**\n"
+            for extension in agent_extensions:
+                if extension["commands"] == []:
+                    continue
+                extension_name = extension["extension_name"]
+                extension_description = extension["description"]
+                agent_commands += (
+                    f"\n### {extension_name}\nDescription: {extension_description}\n"
+                )
+                for command in extension["commands"]:
+                    command_friendly_name = command["friendly_name"]
+                    command_description = command["description"]
+                    agent_commands += f"\n#### {command_friendly_name}\nDescription: {command_description}\nCommand execution format:"
+                    command_args = json.dumps(command["command_args"])
+                    command_args = command_args.replace(
+                        '""',
+                        '"The assistant will fill in the value based on relevance to the conversation."',
+                    )
+                    agent_commands += (
+                        f'\n- #execute("{command_friendly_name}", {command_args})\n'
+                    )
+            agent_commands += f"""## Command Execution Guidelines
+- **The assistant has commands available to use if they would be useful to provide a better user experience.**
+- Reference examples for correct syntax and usage of commands.
+- To execute a command, the assistant can reference the examples and the command execution response will be replaced with the commands output for the user in the assistants response.
+- All inputs are strings and must be filled in wrapped with double quotes and with appropriate values.
+- The assistant can execute a command anywhere in the response and the commands will be executed in the order they are used.
+- Always wrap the the command name and arguments in double quotes, not single quotes.
+- If referencing a file path, use the assistant's working directory as the file path. The assistant's working directory is {working_directory}.
+- Only reference files in the working directory! The assistant cannot access files outside of the working directory.
+- All files in the working directory will be immediately available to the user and agent in this folder: {conversation_outputs}
+- Command executions must start with #execute to be parsed and executed.
+- The assistant will receive the command output before the user does and will be able to reference the output in the response.
+- The assistant can choose to execute as many commands as needed in the response in the order that they should be executed.
+- **THE ASSISTANT CANNOT EXECUTE A COMMAND THAT IS NOT ON THE LIST OF EXAMPLES!**"""
         formatted_prompt = self.custom_format(
             string=prompt,
             user_input=user_input,
             agent_name=self.agent_name,
-            COMMANDS=self.agent_commands if len(command_list) > 0 else "",
+            COMMANDS=agent_commands,
             context=context,
-            command_list=self.agent_commands if len(command_list) > 0 else "",
+            command_list=agent_commands,
             date=datetime.now().strftime("%B %d, %Y %I:%M %p"),
             working_directory=working_directory,
             helper_agent_name=helper_agent_name,
@@ -860,89 +894,77 @@ class Interactions:
         ]
         logging.info(f"Agent command list: {command_list}")
         if len(command_list) > 0:
-            commands_to_execute = re.findall(r"#execute\((.*?)\)", self.response)
+            # Updated regex pattern to capture full match and inner content
+            commands_to_execute = re.findall(r"(#execute\((.*?)\))", self.response)
             reformatted_response = self.response
             if len(commands_to_execute) > 0:
-                for command in commands_to_execute:
-                    command_name = str(command.split(",")[0])
-                    if command_name.startswith(" "):
-                        command_name = command_name[1:]
-                    if command_name.endswith(" "):
-                        command_name = command_name[:-1]
-                    command_name = command_name.replace("'", "").replace('"', "")
-                    if (
-                        command_name != ""
-                        and command_name != None
-                        and command_name != "None"
-                    ):
-                        if len(command.split(",")[1:]) > 0:
-                            try:
-                                command_args = json.loads(
-                                    '{"command_args": '
-                                    + ",".join(command.split(",")[1:])
-                                    + "}"
-                                )
-                            except:
-                                command_args = {}
-                        else:
-                            command_args = {}
-                        if "command_args" in command_args:
-                            command_args = command_args["command_args"]
-                        logging.info(f"Command to execute: {command_name}")
-                        logging.info(f"Command Args: {command_args}")
-                        if command_name not in command_list:
-                            # Ask the agent for clarification on which command should be executed.
-                            command_output = self.ApiClient.prompt_agent(
-                                agent_name=self.agent_name,
-                                prompt_name="Command Clarification",
-                                prompt_args={
-                                    "command_name": command_name,
-                                    "command_args": json.dumps(command_args),
-                                    "conversation_name": "AGiXT Terminal",
-                                },
-                            )
-                        else:
-                            try:
-                                c.log_interaction(
-                                    role=self.agent_name,
-                                    message=f"[ACTIVITY] Executing command `{command_name}` with args `{command_args}`.",
-                                )
-                                ext = Extensions(
-                                    agent_name=self.agent_name,
-                                    agent_config=self.agent.AGENT_CONFIG,
-                                    conversation_name=conversation_name,
-                                    conversation_id=c.get_conversation_id(),
-                                    agent_id=self.agent.agent_id,
-                                    ApiClient=self.ApiClient,
-                                    user=self.user,
-                                )
-                                command_output = await ext.execute_command(
-                                    command_name=command_name,
-                                    command_args=command_args,
-                                )
-                                formatted_output = f"```\n{command_output}\n```"
-                                command_output = f"**Executed Command:** `{command_name}` with the following parameters:\n```json\n{json.dumps(command_args, indent=4)}\n```\n\n**Command Output:**\n{formatted_output}"
-                            except Exception as e:
-                                logging.error(
-                                    f"Error: {self.agent_name} failed to execute command `{command_name}`. {e}"
-                                )
-                                c.log_interaction(
-                                    role=self.agent_name,
-                                    message=f"[ACTIVITY][ERROR] Failed to execute command `{command_name}`.",
-                                )
-                                command_output = f"**Failed to execute command `{command_name}` with args `{command_args}`. Please try again.**"
-                        if command_output:
+                for full_match, command in commands_to_execute:
+                    # Split command into name and arguments
+                    parts = command.split(",", 1)
+                    command_name = parts[0].strip().strip("'\"")
+                    command_args_str = parts[1] if len(parts) > 1 else "{}"
+
+                    # Parse command arguments
+                    try:
+                        command_args = json.loads(command_args_str)
+                    except json.JSONDecodeError:
+                        # Handle JSON parsing errors
+                        command_args = {}
+                        logging.warning(
+                            f"Failed to parse command arguments: {command_args_str}"
+                        )
+
+                    logging.info(f"Command to execute: {command_name}")
+                    logging.info(f"Command Args: {command_args}")
+
+                    if command_name not in command_list:
+                        # Handle unknown command
+                        command_output = f"Unknown command: {command_name}"
+                        logging.warning(command_output)
+                    else:
+                        try:
                             c.log_interaction(
                                 role=self.agent_name,
-                                message=f"[ACTIVITY] {command_output}",
+                                message=f"[ACTIVITY] Executing command `{command_name}` with args `{command_args}`.",
                             )
-                            reformatted_response = reformatted_response.replace(
-                                f"#execute({command_name}, {command_args})",
-                                (
-                                    json.dumps(command_output)
-                                    if isinstance(command_output, dict)
-                                    else command_output
-                                ),
+                            ext = Extensions(
+                                agent_name=self.agent_name,
+                                agent_config=self.agent.AGENT_CONFIG,
+                                conversation_name=conversation_name,
+                                conversation_id=c.get_conversation_id(),
+                                agent_id=self.agent.agent_id,
+                                ApiClient=self.ApiClient,
+                                user=self.user,
                             )
-                        if reformatted_response != self.response:
-                            self.response = reformatted_response
+                            command_output = await ext.execute_command(
+                                command_name=command_name,
+                                command_args=command_args,
+                            )
+                            formatted_output = f"```\n{command_output}\n```"
+                            command_output = f"**Executed Command:** `{command_name}` with the following parameters:\n```json\n{json.dumps(command_args, indent=4)}\n```\n\n**Command Output:**\n{formatted_output}"
+                        except Exception as e:
+                            logging.error(
+                                f"Error: {self.agent_name} failed to execute command `{command_name}`. {e}"
+                            )
+                            c.log_interaction(
+                                role=self.agent_name,
+                                message=f"[ACTIVITY][ERROR] Failed to execute command `{command_name}`.",
+                            )
+                            command_output = f"**Failed to execute command `{command_name}` with args `{command_args}`. Please try again.**"
+
+                    if command_output:
+                        c.log_interaction(
+                            role=self.agent_name,
+                            message=f"[ACTIVITY] {command_output}",
+                        )
+                        # Replace the exact matched command with the output
+                        reformatted_response = reformatted_response.replace(
+                            full_match,
+                            (
+                                command_output
+                                if not isinstance(command_output, dict)
+                                else json.dumps(command_output)
+                            ),
+                        )
+                if reformatted_response != self.response:
+                    self.response = reformatted_response

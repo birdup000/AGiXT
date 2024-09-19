@@ -8,8 +8,9 @@ from DB import (
 )
 from OAuth2Providers import get_sso_provider
 from Models import UserInfo, Register, Login
+from agixtsdk import AGiXTSDK
 from fastapi import Header, HTTPException
-from Globals import getenv
+from Globals import getenv, get_default_agent, get_agixt_training_urls
 from datetime import datetime, timedelta
 from fastapi import HTTPException
 from sendgrid import SendGridAPIClient
@@ -424,6 +425,9 @@ class MagicalAuth:
         session = get_session()
         user = session.query(User).filter(User.email == self.email).first()
         if user is not None:
+            logging.info(
+                f"User already exists with email: {self.email}. {user.__dict__}"
+            )
             session.close()
             raise HTTPException(
                 status_code=409, detail="User already exists with this email."
@@ -469,7 +473,29 @@ class MagicalAuth:
                 )
             except Exception as e:
                 pass
-        # Return mfa_token for QR code generation
+        # After registering the user, add a default AGiXT agent for the user
+        # Train the agent on the AGiXT documentation.
+        create_agent = str(getenv("CREATE_AGENT_ON_REGISTER")).lower() == "true"
+        if create_agent:
+            agixt = AGiXTSDK(base_uri=getenv("AGIXT_URI"))
+            otp = pyotp.TOTP(mfa_token)
+            agixt.login(email=new_user.email, otp=otp.now())
+            agent_name = getenv("AGIXT_AGENT")
+            agent_config = get_default_agent()
+            agent_settings = agent_config["settings"]
+            agent_commands = agent_config["commands"]
+            create_agixt_agent = str(getenv("CREATE_AGIXT_AGENT")).lower() == "true"
+            training_urls = (
+                get_agixt_training_urls()
+                if create_agixt_agent and agent_name == "AGiXT"
+                else agent_config["training_urls"]
+            )
+            agixt.add_agent(
+                agent_name=agent_name,
+                settings=agent_settings,
+                commands=agent_commands,
+                training_urls=training_urls,
+            )
         return mfa_token
 
     def update_user(self, **kwargs):

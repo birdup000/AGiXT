@@ -660,6 +660,12 @@ class AGiXT:
             file_data = await self.download_file_to_workspace(
                 url=file_url, file_name=file_name
             )
+            if file_data == {}:
+                self.conversation.log_interaction(
+                    role=self.agent_name,
+                    message=f"[ACTIVITY][ERROR] I was unable to read the file from {file_url}.",
+                )
+                return f"Unable to read the file from {file_url} ."
             file_name = file_data["file_name"]
             file_path = os.path.normpath(
                 os.path.join(self.agent_workspace, collection_id, file_name)
@@ -910,7 +916,9 @@ class AGiXT:
         )
         return file_content
 
-    async def download_file_to_workspace(self, url: str, file_name: str = ""):
+    async def download_file_to_workspace(
+        self, url: str, file_name: str = "", download_headers={}
+    ):
         """
         Download a file from a URL to the workspace
 
@@ -947,7 +955,17 @@ class AGiXT:
                 file_data = base64.b64decode(url.split(",")[1])
             else:
                 file_type = file_name.split(".")[-1]
-                file_data = base64.b64decode(url)
+                # Download the file
+                try:
+                    if not url.startswith("http"):
+                        return {}
+                    if url in ["", None]:
+                        return {}
+                    file_data = requests.get(url, headers=download_headers).content
+                except Exception as e:
+                    logging.error(f"Error downloading file: {e}")
+                    return {}
+                # file_data = base64.b64decode(url)
             full_path = os.path.normpath(
                 os.path.join(self.conversation_workspace, file_name)
             )
@@ -1276,6 +1294,13 @@ class AGiXT:
                 analyze_user_input = (
                     str(message["analyze_user_input"]).lower() == "true"
                 )
+            download_headers = {}
+            if "download_headers" in message:
+                download_headers = (
+                    json.loads(message["download_headers"])
+                    if isinstance(message["download_headers"], str)
+                    else message["download_headers"]
+                )
             if "content" not in message:
                 continue
             if isinstance(message["content"], str):
@@ -1419,12 +1444,20 @@ class AGiXT:
                                 else:
                                     file_name = ""
                                 if key != "audio_url":
-                                    files.append(
+                                    downloaded_file = (
                                         await self.download_file_to_workspace(
                                             url=url,
                                             file_name=file_name,
+                                            download_headers=download_headers,
                                         )
                                     )
+                                    if downloaded_file != {}:
+                                        files.append(downloaded_file)
+                                    else:
+                                        c.log_interaction(
+                                            role=self.agent_name,
+                                            message="[ACTIVITY][ERROR] I was unable to read from the URL specified.",
+                                        )
                                 else:
                                     # If there is an audio_url, it is the user's voice input that needs transcribed before running inference
                                     audio_file_info = (

@@ -202,7 +202,10 @@ class agixt_actions(Extensions):
         self.ApiClient = (
             kwargs["ApiClient"]
             if "ApiClient" in kwargs
-            else AGiXTSDK(base_uri=getenv("AGIXT_URI"), api_key=kwargs["api_key"])
+            else AGiXTSDK(
+                base_uri=getenv("AGIXT_URI"),
+                api_key=kwargs["api_key"] if "api_key" in kwargs else "",
+            )
         )
         self.failures = 0
 
@@ -420,8 +423,8 @@ class agixt_actions(Extensions):
                     step_number=i,
                     prompt_type="Prompt",
                     prompt={
-                        "prompt_name": "Task Execution",
-                        "introduction": response,
+                        "prompt_name": "Chat with Commands",
+                        "user_input": response,
                         "websearch": researching,
                         "websearch_depth": 3,
                         "context_results": 5,
@@ -575,13 +578,18 @@ class agixt_actions(Extensions):
         )
         with open(filename, "w") as f:
             f.write(new_file_content)
-        return new_file_content
+        new_path = os.path.join(os.getcwd(), "WORKSPACE", "extensions", filename)
+        os.makedirs(os.path.dirname(new_path), exist_ok=True)
+        with open(new_path, "w") as f:
+            f.write(new_file_content)
+        agixt_uri = getenv("AGIXT_URI")
+        return f"{agixt_uri}/outputs/extensions/{filename}"
 
     async def generate_openapi_chain(
         self,
         extension_name: str,
         openapi_json_url: str,
-        api_base_uri: str,
+        api_base_uri: str = "",
     ):
         """
         Generate an AGiXT extension from an OpenAPI JSON URL
@@ -599,12 +607,39 @@ class agixt_actions(Extensions):
         openapi_data = json.loads(openapi_str)
         endpoints = self.parse_openapi(data=openapi_data)
         auth_type = self.get_auth_type(openapi_data=openapi_data)
+        if api_base_uri == "":
+            rules = """## Guidelines
+- Respond in JSON in a markdown codeblock with the only key being `base_uri`, for example:
+```json
+{
+    "base_uri": "https://api.example.com/v1"
+}
+```
+"""
+            response = self.ApiClient.prompt_agent(
+                agent_name=self.agent_name,
+                prompt_name="Chat",
+                prompt_args={
+                    "user_input": f"{rules}\nUsing context from the web search, please provide the base URI of the API for: {extension_name}.",
+                    "websearch": True,
+                    "websearch_depth": 2,
+                    "analyze_user_input": False,
+                    "conversation_name": self.conversation_name,
+                    "log_user_input": False,
+                    "log_output": False,
+                    "tts": False,
+                },
+            )
+            # Stripe the base_uri from the response
+            response = response.split("```json")[1].split("```")[0].strip()
+            response = response.split("```")[1].strip()
+            api_base_uri = json.loads(response).get("base_uri", "")
         extension_name = extension_name.lower().replace(" ", "_")
         chain_name = f"OpenAPI to Python Chain - {extension_name}"
         chains = self.ApiClient.get_chains()
         # Check if any chain with the same name already exists, if so, delete it
         for chain in chains:
-            if chain["name"] == chain_name:
+            if chain == chain_name:
                 self.ApiClient.delete_chain(chain_name=chain_name)
         self.ApiClient.add_chain(chain_name=chain_name)
         i = 0
