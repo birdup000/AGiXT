@@ -157,55 +157,58 @@ class agixt_actions(Extensions):
     """
 
     def __init__(self, **kwargs):
+        # Initialize base attributes without calling super().__init__()
+        self.command_name = kwargs.pop("command_name", "Smart Prompt")
+        self.agent_name = kwargs.pop("agent_name", "gpt4free")
+        self.conversation_name = kwargs.pop("conversation_name", "")
+        self.WORKING_DIRECTORY = kwargs.pop(
+            "conversation_directory", os.path.join(os.getcwd(), "WORKSPACE")
+        )
+        self.conversation_id = kwargs.pop("conversation_id", "")
+        api_key = kwargs.pop("api_key", "")
+
+        # Remove'provider' if it exists, as it's not used in this class
+        kwargs.pop("provider", None)
+
+        # Initialize commands dictionary
         self.commands = {
             "Create Task Chain": self.create_task_chain,
             "Generate Extension from OpenAPI": self.generate_openapi_chain,
             "Generate Agent Helper Chain": self.generate_helper_chain,
-            "Ask for Help or Further Clarification to Complete Task": self.ask_for_help,
+            "Ask for Help": self.ask_for_help,
             "Execute Python Code": self.execute_python_code_internal,
             "Get Python Code from Response": self.get_python_code_from_response,
-            "Get Mindmap for task to break it down": self.get_mindmap,
-            "Store information in my long term memory": self.store_long_term_memory,
+            "Get Mindmap for Task": self.get_mindmap,
+            "Store in Long Term Memory": self.store_long_term_memory,
             "Research on arXiv": self.search_arxiv,
-            "Read GitHub Repository into long term memory": self.read_github_repository,
-            "Read Website Content into long term memory": self.write_website_to_memory,
-            "Read non-image file content into long term memory": self.read_file_content,
+            "Read GitHub Repository": self.read_github_repository,
+            "Read Website Content": self.write_website_to_memory,
+            "Read File Content": self.read_file_content,
             "Make CSV Code Block": self.make_csv_code_block,
             "Get CSV Preview": self.get_csv_preview,
             "Get CSV Preview Text": self.get_csv_preview_text,
             "Strip CSV Data from Code Block": self.get_csv_from_response,
-            "Convert a string to a Pydantic model": self.convert_string_to_pydantic_model,
+            "Convert String to Pydantic Model": self.convert_string_to_pydantic_model,
             "Disable Command": self.disable_command,
             "Plan Multistep Task": self.plan_multistep_task,
-            "Replace init in File": self.replace_init_in_file,
+            "Replace Init in File": self.replace_init_in_file,
+            "Ask Question": self.ask,
+            "Instruct Agent": self.instruct,
+            "Convert LLM Response to List": self.convert_llm_response_to_list,
+            "Convert Questions to Dataset": self.convert_questions_to_dataset,
         }
-        user = kwargs["user"] if "user" in kwargs else "user"
-        for chain in Chain(user=user).get_chains():
-            self.commands[chain] = self.run_chain
-        self.command_name = (
-            kwargs["command_name"] if "command_name" in kwargs else "Smart Prompt"
-        )
-        self.agent_name = kwargs["agent_name"] if "agent_name" in kwargs else "gpt4free"
-        self.conversation_name = (
-            kwargs["conversation_name"] if "conversation_name" in kwargs else ""
-        )
-        self.WORKING_DIRECTORY = (
-            kwargs["conversation_directory"]
-            if "conversation_directory" in kwargs
-            else os.path.join(os.getcwd(), "WORKSPACE")
-        )
-        os.makedirs(self.WORKING_DIRECTORY, exist_ok=True)
-        self.conversation_id = (
-            kwargs["conversation_id"] if "conversation_id" in kwargs else ""
-        )
 
-        self.ApiClient = (
-            kwargs["ApiClient"]
-            if "ApiClient" in kwargs
-            else AGiXTSDK(
+        user = kwargs.get("user", "user")
+        for chain in Chain(user=user).get_chains():
+            self.commands[f"Run Chain: {chain}"] = self.run_chain
+
+        os.makedirs(self.WORKING_DIRECTORY, exist_ok=True)
+        self.ApiClient = kwargs.get(
+            "ApiClient",
+            AGiXTSDK(
                 base_uri=getenv("AGIXT_URI"),
-                api_key=kwargs["api_key"] if "api_key" in kwargs else "",
-            )
+                api_key=api_key,
+            ),
         )
         self.failures = 0
 
@@ -394,7 +397,7 @@ class agixt_actions(Extensions):
             response = self.ApiClient.run_chain(
                 chain_name="Smart Prompt",
                 agent_name=self.agent_name,
-                user_input=f"Task List:\n{string_task_list}\nPrimary Objective to keep in mind while working on the task: {primary_objective} \nAll tasks on the list are being planned and completed separately. Assume all steps prior have been completed. The only task to complete to move towards the objective: {task}",
+                user_input=f"Task List:\n{string_task_list}\nPrimary Objective to keep in mind while working on the task: {primary_objective} \nAll tasks on the list are being planned and completed separately.Assume all steps prior have been completed. The only task to complete to move towards the objective: {task}",
             )
             logging.info(
                 f"[TASK CHAIN GENERATOR] Smart Prompt for Step {i}: {response}"
@@ -528,7 +531,7 @@ class agixt_actions(Extensions):
                             }
                             endpoint_info["responses"].append(response_info)
                     endpoints.append(endpoint_info)
-        return endpoints
+            return endpoints
 
     def get_auth_type(self, openapi_data):
         """
@@ -569,7 +572,7 @@ class agixt_actions(Extensions):
         """
         with open(filename, "r") as f:
             file_content = f.read()
-        new_init = new_init.replace("    def __init__", "def __init__")
+        new_init = new_init.replace("def __init__", "def __init__")
         new_file_content = re.sub(
             r"def __init__\((.*?)\):.*?async def",
             new_init,
@@ -594,27 +597,27 @@ class agixt_actions(Extensions):
         Generate an AGiXT extension from an OpenAPI JSON URL
 
         Args:
-        extension_name (str): The name of the extension
-        openapi_json_url (str): The URL of the OpenAPI JSON file
-        api_base_uri (str): The base URI of the API
+            extension_name (str): The name of the extension
+            openapi_json_url (str): The URL of the OpenAPI JSON file
+            api_base_uri (str): The base URI of the API
 
         Returns:
-        str: The name of the created chain
+            str: The name of the created chain
         """
         # Experimental currently.
         openapi_str = requests.get(openapi_json_url).text
         openapi_data = json.loads(openapi_str)
         endpoints = self.parse_openapi(data=openapi_data)
         auth_type = self.get_auth_type(openapi_data=openapi_data)
+
         if api_base_uri == "":
             rules = """## Guidelines
-- Respond in JSON in a markdown codeblock with the only key being `base_uri`, for example:
-```json
-{
-    "base_uri": "https://api.example.com/v1"
-}
-```
-"""
+    - Respond in JSON in a markdown codeblock with the only key being `base_uri`, for example:
+    ```json
+    {
+        "base_uri": "https://api.example.com/v1"
+    }
+    ```"""
             response = self.ApiClient.prompt_agent(
                 agent_name=self.agent_name,
                 prompt_name="Chat",
@@ -631,17 +634,20 @@ class agixt_actions(Extensions):
             )
             # Stripe the base_uri from the response
             response = response.split("```json")[1].split("```")[0].strip()
-            response = response.split("```")[1].strip()
             api_base_uri = json.loads(response).get("base_uri", "")
+
         extension_name = extension_name.lower().replace(" ", "_")
         chain_name = f"OpenAPI to Python Chain - {extension_name}"
         chains = self.ApiClient.get_chains()
+
         # Check if any chain with the same name already exists, if so, delete it
         for chain in chains:
             if chain == chain_name:
                 self.ApiClient.delete_chain(chain_name=chain_name)
+
         self.ApiClient.add_chain(chain_name=chain_name)
         i = 0
+
         for endpoint in endpoints:
             i += 1
             self.ApiClient.add_step(
@@ -711,6 +717,7 @@ class agixt_actions(Extensions):
                 "python_file_content": "{STEP" + str(i - 1) + "}",
             },
         )
+
         new_extension = self.ApiClient.get_prompt(prompt_name="New Extension Format")
         new_extension = new_extension.replace("{extension_name}", extension_name)
         new_extension = new_extension.replace("extension_commands", "STEP" + str(i))
@@ -721,6 +728,7 @@ class agixt_actions(Extensions):
         new_extension = new_extension.replace(
             "{upper_extension_name}", extension_name.upper()
         )
+
         i += 1
         self.ApiClient.add_step(
             chain_name=chain_name,
@@ -782,7 +790,7 @@ class agixt_actions(Extensions):
             step_number=i,
             prompt_type="Command",
             prompt={
-                "command_name": "Replace init in File",
+                "command_name": "Replace Init in File",
                 "filename": f"{extension_name}.py",
                 "new_init": "{STEP" + str(i - 1) + "}",
             },
@@ -987,10 +995,10 @@ class agixt_actions(Extensions):
         filepath = self.safe_join(base=self.WORKING_DIRECTORY, paths=filename)
         with open(filepath, "r") as f:
             lines = f.readlines()
-        if len(lines) > 5:
-            lines = lines[:5]
-        else:
-            lines = lines[:2]
+            if len(lines) > 5:
+                lines = lines[:5]
+            else:
+                lines = lines[:2]
         lines_string = "\n".join(lines)
         return lines_string
 
